@@ -1,0 +1,7 @@
+{
+  "name": "London Innovation Academy Voice Agent",
+  "description": "Real-time conversational voice agent for the London Innovation Academy using Gemini Live API.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
