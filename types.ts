@@ -16,12 +16,12 @@ export interface LiveConfig {
   voiceName: string;
 }
 
-export type AgentActionType = 'CALL' | 'WHATSAPP';
+export type AgentActionType = 'CALL';
 
 export interface AgentAction {
   id: string;
   type: AgentActionType;
-  details: string; // e.g., "Calling +201..." or "Message: Details sent"
+  details: string; // e.g., "Calling +201..."
   status: 'pending' | 'completed';
   timestamp: Date;
 }

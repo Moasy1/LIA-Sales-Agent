@@ -23,28 +23,6 @@ const tools: FunctionDeclaration[] = [
       required: ['phoneNumber', 'reason'],
     },
   },
-  {
-    name: 'send_whatsapp_message',
-    description: 'Send a WhatsApp message with course details, pricing, or brochures.',
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        phoneNumber: {
-          type: Type.STRING,
-          description: 'The phone number to send the message to.',
-        },
-        messageContent: {
-          type: Type.STRING,
-          description: 'The content of the message.',
-        },
-        attachment: {
-          type: Type.STRING,
-          description: 'Optional link to PDF or brochure to attach.',
-        },
-      },
-      required: ['phoneNumber', 'messageContent'],
-    },
-  },
 ];
 
 export const useLiveAPI = () => {
@@ -140,10 +118,9 @@ export const useLiveAPI = () => {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
           },
           tools: [
-            { googleSearch: {} },
             { functionDeclarations: tools }
           ],
-          systemInstruction: `أنت "أليكس" (Alex)، وكيل مبيعات ومستشار قبول في "أكاديمية لندن للابتكار" (London Innovation Academy).
+          systemInstruction: `أنت "أليكس" (Alex)، وكيل مبيعات ومستشار قبول في "London Innovation Academy" (أكاديمية لندن للابتكار).
 
 معلومات وحقائق أساسية عن الأكاديمية:
 1. **الرؤية:** تمكين الشباب العربي بمهارات المستقبل من خلال تعليم عملي ومعتمد دولياً.
@@ -157,12 +134,12 @@ export const useLiveAPI = () => {
 
 قدراتك كوكيل ذكي (Agent Capabilities):
 1. **إجراء المكالمات (Outbound Calls):** يمكنك الاتصال بالطلاب لمتابعة الحجز أو الرد على الاستفسارات المعقدة. إذا طلب العميل مكالمة، استخدم الأداة \`start_outbound_call\`.
-2. **إرسال واتساب (WhatsApp):** يمكنك إرسال تفاصيل الكورسات، البروشور، وروابط الدفع عبر واتساب. استخدم الأداة \`send_whatsapp_message\`.
 
 تعليمات الشخصية والأسلوب:
 1. **اللغة:** تحدث فقط باللهجة المصرية العامية (Masri).
-2. **التعريف:** ابدأ بـ "أهلاً بيك، أنا أليكس".
-3. **التفاعل:** لو العميل طلب تفاصيل مكتوبة، قوله "هبعتلك حالا على واتساب" واستخدم الأداة. لو العميل عايز يكلم حد بشري أو محتاج تفصيل أكتر، اعرض عليه تتصل بيه حالا واستخدم أداة الاتصال.
+2. **التعريف:** ابدأ بـ "أهلاً بيك في London Innovation Academy، أنا أليكس".
+3. **التفاعل:** لو العميل عايز يكلم حد بشري أو محتاج تفصيل أكتر، اعرض عليه تتصل بيه حالا واستخدم أداة الاتصال.
+4. **ملاحظة هامة:** أنت لا تتحكم في الواتساب. إذا طلب العميل إرسال شيء على واتساب، أخبره أنك ستقوم بتجهيز البيانات ولكن اطلب منه استخدام زر الواتساب الموجود في الموقع للتواصل المباشر.
 
 المصادر الإضافية:
 1. الموقع الرئيسي: https://london-innovation-academy.com/
@@ -209,21 +186,29 @@ export const useLiveAPI = () => {
               const functionResponses: any[] = [];
               message.toolCall.functionCalls.forEach((fc) => {
                 console.log('Function triggered:', fc.name, fc.args);
-                const newAction: AgentAction = {
-                  id: fc.id,
-                  type: fc.name === 'start_outbound_call' ? 'CALL' : 'WHATSAPP',
-                  details: fc.name === 'start_outbound_call' 
-                    ? `جاري الاتصال بـ ${fc.args.phoneNumber}...` 
-                    : `إرسال واتساب لـ ${fc.args.phoneNumber}`,
-                  status: 'completed',
-                  timestamp: new Date()
-                };
-                setAgentActions(prev => [newAction, ...prev]);
-                functionResponses.push({
-                  id: fc.id,
-                  name: fc.name,
-                  response: { result: "success", info: "Action executed successfully in CRM." }
-                });
+                // Only handle calls
+                if (fc.name === 'start_outbound_call') {
+                    const newAction: AgentAction = {
+                        id: fc.id,
+                        type: 'CALL',
+                        details: `جاري الاتصال بـ ${fc.args.phoneNumber}...`,
+                        status: 'completed',
+                        timestamp: new Date()
+                    };
+                    setAgentActions(prev => [newAction, ...prev]);
+                    functionResponses.push({
+                        id: fc.id,
+                        name: fc.name,
+                        response: { result: "success", info: "Call initiated successfully." }
+                    });
+                } else {
+                     // Fallback for unknown tools
+                     functionResponses.push({
+                        id: fc.id,
+                        name: fc.name,
+                        response: { result: "error", info: "Tool not supported" }
+                     });
+                }
               });
               if (functionResponses.length > 0) {
                 sessionPromise.then((session) => {

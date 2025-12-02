@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useLiveAPI } from './hooks/useLiveAPI';
 import { LiveStatus } from './types';
 import AudioVisualizer from './components/AudioVisualizer';
-import { Mic, MicOff, Phone, X, MessageSquare, Loader2, ExternalLink, Globe, PhoneOutgoing, MessageCircle, AlertCircle } from 'lucide-react';
+import { Mic, MicOff, Phone, X, MessageSquare, Loader2, ExternalLink, Globe, PhoneOutgoing, MessageCircle, AlertCircle, Code, Copy, Check } from 'lucide-react';
 
 const App: React.FC = () => {
   const { 
@@ -18,6 +18,8 @@ const App: React.FC = () => {
   } = useLiveAPI();
 
   const [hasError, setHasError] = useState(false);
+  const [showEmbedModal, setShowEmbedModal] = useState(false);
+  const [copiedType, setCopiedType] = useState<'widget' | 'embed' | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll transcripts
@@ -41,6 +43,30 @@ const App: React.FC = () => {
   const openWebsite = () => window.open('https://london-innovation-academy.com/', '_blank');
   const openWhatsApp = () => window.open('https://wa.me/201000000000', '_blank'); // Replace with actual number
 
+  const handleCopy = (type: 'widget' | 'embed', code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedType(type);
+    setTimeout(() => setCopiedType(null), 2000);
+  };
+
+  const widgetCode = `<!-- London Innovation Academy Floating Widget -->
+<iframe
+  src="${window.location.origin}"
+  allow="microphone"
+  title="London Innovation Academy AI"
+  style="position: fixed; bottom: 20px; right: 20px; width: 380px; height: 600px; max-height: 80vh; border: none; border-radius: 20px; box-shadow: 0 10px 40px rgba(0,0,0,0.4); z-index: 99999; transition: all 0.3s ease;"
+></iframe>`;
+
+  const embedCode = `<!-- London Innovation Academy Embedded Section -->
+<div style="width: 100%; height: 600px; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0; position: relative;">
+  <iframe
+    src="${window.location.origin}"
+    allow="microphone"
+    title="London Innovation Academy AI"
+    style="width: 100%; height: 100%; border: none;"
+  ></iframe>
+</div>`;
+
   return (
     <div dir="rtl" className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white flex flex-col font-sans overflow-hidden">
       {/* Header */}
@@ -49,14 +75,23 @@ const App: React.FC = () => {
             <div className="w-10 h-10 bg-indigo-500 rounded-lg flex items-center justify-center text-xl font-bold shadow-lg shadow-indigo-500/30">
                 LIA
             </div>
-            <div className="hidden md:block">
-                <h1 className="text-lg font-semibold tracking-wide">أكاديمية لندن للابتكار</h1>
-                <p className="text-xs text-indigo-300 uppercase tracking-widest font-medium">نظام المبيعات الذكي</p>
+            <div>
+                <h1 className="text-base md:text-lg font-bold tracking-wide leading-tight">London Innovation Academy</h1>
+                <p className="text-[10px] md:text-xs text-indigo-300 uppercase tracking-widest font-medium">AI Sales System</p>
             </div>
         </div>
 
         {/* Business Buttons */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 md:gap-3">
+           <button 
+             onClick={() => setShowEmbedModal(true)}
+             className="flex items-center gap-2 px-3 py-2 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 rounded-full text-xs font-medium transition-colors"
+             title="Get Embed Code"
+           >
+             <Code className="w-4 h-4 text-indigo-400" />
+             <span className="hidden md:inline">تضمين (Embed)</span>
+           </button>
+
            <button 
              onClick={openWebsite}
              className="hidden md:flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-xs font-medium transition-colors"
@@ -64,24 +99,67 @@ const App: React.FC = () => {
              <Globe className="w-4 h-4 text-indigo-400" />
              <span>الموقع الرسمي</span>
            </button>
-           <button 
-             onClick={openWhatsApp}
-             className="flex items-center gap-2 px-4 py-2 bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 text-green-400 rounded-full text-xs font-medium transition-colors"
-           >
-             <MessageCircle className="w-4 h-4" />
-             <span className="hidden md:inline">تواصل واتساب</span>
-           </button>
            
            <div className="h-6 w-px bg-white/10 mx-1 hidden md:block"></div>
 
            <div className="flex items-center gap-2 bg-black/20 px-3 py-1.5 rounded-full border border-white/5">
               <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : status === LiveStatus.ERROR ? 'bg-red-500' : 'bg-slate-500'}`} />
               <span className="text-xs font-mono text-slate-400 uppercase hidden md:inline">
-                  {status === LiveStatus.CONNECTING ? 'جاري الاتصال...' : status === LiveStatus.CONNECTED ? 'CRM متصل' : status === LiveStatus.ERROR ? 'خطأ' : 'غير متصل'}
+                  {status === LiveStatus.CONNECTING ? 'Connecting...' : status === LiveStatus.CONNECTED ? 'System Active' : status === LiveStatus.ERROR ? 'Error' : 'Offline'}
               </span>
            </div>
         </div>
       </header>
+
+      {/* Embed Modal */}
+      {showEmbedModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden" dir="ltr">
+            <div className="p-4 border-b border-white/10 flex justify-between items-center bg-white/5">
+              <h3 className="font-semibold text-lg flex items-center gap-2">
+                <Code className="w-5 h-5 text-indigo-400" />
+                Embed Code
+              </h3>
+              <button onClick={() => setShowEmbedModal(false)} className="hover:bg-white/10 p-1 rounded-full transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 space-y-6 max-h-[80vh] overflow-y-auto">
+              {/* Option 1 */}
+              <div>
+                <h4 className="text-sm font-medium text-indigo-300 mb-2 uppercase tracking-wider">Option 1: Floating Widget (Bottom Right)</h4>
+                <div className="relative group">
+                  <pre className="bg-black/50 p-4 rounded-lg text-xs text-slate-300 font-mono overflow-x-auto border border-white/5">
+                    {widgetCode}
+                  </pre>
+                  <button 
+                    onClick={() => handleCopy('widget', widgetCode)}
+                    className="absolute top-2 right-2 p-2 bg-indigo-600 hover:bg-indigo-500 rounded-md text-white transition-colors"
+                  >
+                    {copiedType === 'widget' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              
+              {/* Option 2 */}
+              <div>
+                <h4 className="text-sm font-medium text-indigo-300 mb-2 uppercase tracking-wider">Option 2: Embedded Section</h4>
+                <div className="relative group">
+                   <pre className="bg-black/50 p-4 rounded-lg text-xs text-slate-300 font-mono overflow-x-auto border border-white/5">
+                    {embedCode}
+                  </pre>
+                  <button 
+                    onClick={() => handleCopy('embed', embedCode)}
+                    className="absolute top-2 right-2 p-2 bg-indigo-600 hover:bg-indigo-500 rounded-md text-white transition-colors"
+                  >
+                    {copiedType === 'embed' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="flex-1 flex flex-col md:flex-row pt-20 h-screen">
         
@@ -175,17 +253,17 @@ const App: React.FC = () => {
                 <div className="space-y-2">
                     {agentActions.length === 0 ? (
                         <div className="text-center text-slate-500 text-sm py-4 border border-dashed border-white/10 rounded-lg">
-                            جرب تقول: "ابعثلي التفاصيل واتساب" أو "ممكن تكلمني؟"
+                            النظام جاهز لإجراء المكالمات إذا طُلب ذلك.
                         </div>
                     ) : (
                         agentActions.map((action) => (
                             <div key={action.id} className="flex items-center justify-between bg-white/5 p-3 rounded-lg border border-white/5 animate-in slide-in-from-bottom-2 fade-in">
                                 <div className="flex items-center gap-3">
-                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${action.type === 'CALL' ? 'bg-indigo-500/20 text-indigo-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
-                                        {action.type === 'CALL' ? <PhoneOutgoing className="w-4 h-4" /> : <MessageCircle className="w-4 h-4" />}
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center bg-indigo-500/20 text-indigo-400`}>
+                                        <PhoneOutgoing className="w-4 h-4" />
                                     </div>
                                     <div>
-                                        <p className="text-sm font-medium text-slate-200">{action.type === 'CALL' ? 'اتصال صادر' : 'رسالة واتساب'}</p>
+                                        <p className="text-sm font-medium text-slate-200">اتصال صادر</p>
                                         <p className="text-xs text-slate-400">{action.details}</p>
                                     </div>
                                 </div>
