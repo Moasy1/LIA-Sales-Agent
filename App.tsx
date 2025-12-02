@@ -1,8 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useLiveAPI } from './hooks/useLiveAPI';
 import { LiveStatus } from './types';
 import AudioVisualizer from './components/AudioVisualizer';
-import { Mic, MicOff, Phone, X, MessageSquare, Loader2, ExternalLink, Globe, PhoneOutgoing, MessageCircle } from 'lucide-react';
+import { Mic, MicOff, Phone, X, MessageSquare, Loader2, ExternalLink, Globe, PhoneOutgoing, MessageCircle, AlertCircle } from 'lucide-react';
 
 const App: React.FC = () => {
   const { 
@@ -10,13 +10,14 @@ const App: React.FC = () => {
     disconnect, 
     status, 
     transcripts,
-    agentActions, // New state
+    agentActions, 
     isUserSpeaking, 
     isModelSpeaking,
     inputAnalyser,
     outputAnalyser
   } = useLiveAPI();
 
+  const [hasError, setHasError] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll transcripts
@@ -25,6 +26,15 @@ const App: React.FC = () => {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [transcripts]);
+
+  // Track error status
+  useEffect(() => {
+    if (status === LiveStatus.ERROR) {
+      setHasError(true);
+    } else {
+      setHasError(false);
+    }
+  }, [status]);
 
   const isActive = status === LiveStatus.CONNECTED;
 
@@ -65,9 +75,9 @@ const App: React.FC = () => {
            <div className="h-6 w-px bg-white/10 mx-1 hidden md:block"></div>
 
            <div className="flex items-center gap-2 bg-black/20 px-3 py-1.5 rounded-full border border-white/5">
-              <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+              <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : status === LiveStatus.ERROR ? 'bg-red-500' : 'bg-slate-500'}`} />
               <span className="text-xs font-mono text-slate-400 uppercase hidden md:inline">
-                  {status === LiveStatus.CONNECTING ? 'جاري الاتصال...' : status === LiveStatus.CONNECTED ? 'CRM متصل' : 'غير متصل'}
+                  {status === LiveStatus.CONNECTING ? 'جاري الاتصال...' : status === LiveStatus.CONNECTED ? 'CRM متصل' : status === LiveStatus.ERROR ? 'خطأ' : 'غير متصل'}
               </span>
            </div>
         </div>
@@ -78,6 +88,20 @@ const App: React.FC = () => {
         {/* Right Panel (Visualizer, Controls, Action Log) */}
         <div className="flex-1 flex flex-col items-center p-4 md:p-8 relative overflow-hidden order-2 md:order-1">
             
+            {/* Error Banner */}
+            {hasError && (
+              <div className="absolute top-4 w-full max-w-md bg-red-500/10 border border-red-500/20 text-red-200 p-4 rounded-xl flex items-center gap-3 animate-in fade-in slide-in-from-top-4 z-50">
+                <AlertCircle className="w-5 h-5 text-red-500" />
+                <div className="text-sm">
+                  <p className="font-semibold">فشل الاتصال بالنظام</p>
+                  <p className="text-xs opacity-80">يرجى التأكد من إعداد مفتاح API بشكل صحيح.</p>
+                </div>
+                <button onClick={() => setHasError(false)} className="mr-auto hover:bg-red-500/20 p-1 rounded">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             {/* Visualizer & Orb Section */}
             <div className="flex-1 flex flex-col items-center justify-center w-full relative">
                 {/* Background elements */}
