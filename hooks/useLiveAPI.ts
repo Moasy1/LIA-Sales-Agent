@@ -50,11 +50,10 @@ const tools: FunctionDeclaration[] = [
 export const useLiveAPI = () => {
   const [status, setStatus] = useState<LiveStatus>(LiveStatus.DISCONNECTED);
   const [transcripts, setTranscripts] = useState<TranscriptItem[]>([]);
-  const [agentActions, setAgentActions] = useState<AgentAction[]>([]); // New state for actions
+  const [agentActions, setAgentActions] = useState<AgentAction[]>([]);
   const [isUserSpeaking, setIsUserSpeaking] = useState(false);
   const [isModelSpeaking, setIsModelSpeaking] = useState(false);
   
-  // Refs for audio contexts and processing
   const inputAudioContextRef = useRef<AudioContext | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -106,6 +105,20 @@ export const useLiveAPI = () => {
     try {
       setStatus(LiveStatus.CONNECTING);
       
+      // Robust API Key check for Vite/Browser environments
+      let apiKey = "";
+      try {
+        apiKey = process.env.API_KEY || "";
+      } catch (e) {
+        // process is undefined
+      }
+
+      if (!apiKey) {
+        console.error("API Key is missing. Please check your .env file or Vercel settings.");
+        setStatus(LiveStatus.ERROR);
+        return;
+      }
+
       inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
 
@@ -117,7 +130,7 @@ export const useLiveAPI = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
 
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = new GoogleGenAI({ apiKey });
       
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
@@ -126,7 +139,6 @@ export const useLiveAPI = () => {
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
           },
-          // Integrate Tools here
           tools: [
             { googleSearch: {} },
             { functionDeclarations: tools }
@@ -193,36 +205,26 @@ export const useLiveAPI = () => {
             scriptProcessor.connect(inputCtx.destination);
           },
           onmessage: async (message: LiveServerMessage) => {
-            // Handle Tool Calls (Function Calling)
             if (message.toolCall) {
               const functionResponses: any[] = [];
-              
               message.toolCall.functionCalls.forEach((fc) => {
                 console.log('Function triggered:', fc.name, fc.args);
-                
-                // 1. Update UI State
                 const newAction: AgentAction = {
                   id: fc.id,
                   type: fc.name === 'start_outbound_call' ? 'CALL' : 'WHATSAPP',
                   details: fc.name === 'start_outbound_call' 
                     ? `جاري الاتصال بـ ${fc.args.phoneNumber}...` 
                     : `إرسال واتساب لـ ${fc.args.phoneNumber}`,
-                  status: 'completed', // In a real app, we'd wait for backend response
+                  status: 'completed',
                   timestamp: new Date()
                 };
-                
                 setAgentActions(prev => [newAction, ...prev]);
-
-                // 2. Prepare Response for Gemini
-                // In a real app, this is where you'd hit your Backend API (Twilio/Meta)
                 functionResponses.push({
                   id: fc.id,
                   name: fc.name,
                   response: { result: "success", info: "Action executed successfully in CRM." }
                 });
               });
-
-              // 3. Send Tool Response back to Gemini
               if (functionResponses.length > 0) {
                 sessionPromise.then((session) => {
                   session.sendToolResponse({ functionResponses });
@@ -230,7 +232,6 @@ export const useLiveAPI = () => {
               }
             }
 
-            // Handle Audio Output
             const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
             if (base64Audio && outputAudioContextRef.current) {
               setIsModelSpeaking(true);
@@ -262,7 +263,6 @@ export const useLiveAPI = () => {
               scheduledSourcesRef.current.add(source);
             }
 
-            // Handle Interruptions
             if (message.serverContent?.interrupted) {
               scheduledSourcesRef.current.forEach(s => s.stop());
               scheduledSourcesRef.current.clear();
@@ -271,7 +271,6 @@ export const useLiveAPI = () => {
               currentOutputTranscription.current = ''; 
             }
 
-            // Handle Transcripts
             if (message.serverContent?.inputTranscription) {
                currentInputTranscription.current += message.serverContent.inputTranscription.text;
             }
