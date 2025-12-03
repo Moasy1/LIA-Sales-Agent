@@ -1,8 +1,10 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import { useLiveAPI } from './hooks/useLiveAPI';
-import { LiveStatus } from './types';
+import { LiveStatus, ArchivedSession, TranscriptItem, AgentAction, LeadForm } from './types';
 import AudioVisualizer from './components/AudioVisualizer';
-import { Mic, MicOff, Phone, X, MessageSquare, Loader2, ExternalLink, Globe, PhoneOutgoing, MessageCircle, AlertCircle, Code, Copy, Check } from 'lucide-react';
+import AdminDashboard from './components/AdminDashboard';
+import { Mic, MicOff, Phone, X, Loader2, ExternalLink, Globe, AlertCircle, Code, Copy, Check, Download, Lock } from 'lucide-react';
 
 const App: React.FC = () => {
   const { 
@@ -10,24 +12,23 @@ const App: React.FC = () => {
     disconnect, 
     status, 
     transcripts,
-    agentActions, 
+    agentActions,
+    leads,
     isUserSpeaking, 
     isModelSpeaking,
     inputAnalyser,
-    outputAnalyser
+    outputAnalyser,
+    userAudioBlob
   } = useLiveAPI();
 
   const [hasError, setHasError] = useState(false);
   const [showEmbedModal, setShowEmbedModal] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [copiedType, setCopiedType] = useState<'widget' | 'embed' | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll transcripts
-  useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [transcripts]);
+  // Local "Database" of past sessions
+  const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
+  const currentSessionStartTime = useRef<Date | null>(null);
 
   // Track error status
   useEffect(() => {
@@ -36,13 +37,43 @@ const App: React.FC = () => {
     } else {
       setHasError(false);
     }
+
+    // Session Start Tracker
+    if (status === LiveStatus.CONNECTED && !currentSessionStartTime.current) {
+        currentSessionStartTime.current = new Date();
+    }
   }, [status]);
+
+  // Archive Session Logic
+  // We trigger this when status goes from CONNECTED to DISCONNECTED, OR when userAudioBlob becomes available after stop.
+  // The useLiveAPI creates the blob *after* stop.
+  useEffect(() => {
+    if (status === LiveStatus.DISCONNECTED && userAudioBlob && currentSessionStartTime.current) {
+        const newArchive: ArchivedSession = {
+            id: Math.random().toString(36).substring(7).toUpperCase(),
+            startTime: currentSessionStartTime.current,
+            endTime: new Date(),
+            audioBlob: userAudioBlob,
+            transcripts: [...transcripts],
+            actions: [...agentActions],
+            leads: [...leads]
+        };
+        
+        // Prevent duplicate archives if effect runs twice
+        setArchivedSessions(prev => {
+            if (prev.find(s => s.startTime === newArchive.startTime)) return prev;
+            return [newArchive, ...prev];
+        });
+        
+        // Reset start time
+        currentSessionStartTime.current = null;
+    }
+  }, [status, userAudioBlob, transcripts, agentActions, leads]);
 
   const isActive = status === LiveStatus.CONNECTED;
 
   const openWebsite = () => window.open('https://london-innovation-academy.com/', '_blank');
-  const openWhatsApp = () => window.open('https://wa.me/201000000000', '_blank'); // Replace with actual number
-
+  
   const handleCopy = (type: 'widget' | 'embed', code: string) => {
     navigator.clipboard.writeText(code);
     setCopiedType(type);
@@ -69,6 +100,15 @@ const App: React.FC = () => {
 
   return (
     <div dir="rtl" className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white flex flex-col font-sans overflow-hidden">
+      
+      {/* Admin Panel Overlay */}
+      {showAdminPanel && (
+        <AdminDashboard 
+            sessions={archivedSessions} 
+            onClose={() => setShowAdminPanel(false)} 
+        />
+      )}
+
       {/* Header */}
       <header className="p-4 md:p-6 flex justify-between items-center border-b border-white/10 backdrop-blur-md bg-white/5 fixed w-full z-10 top-0 shadow-sm">
         <div className="flex items-center gap-3">
@@ -89,7 +129,6 @@ const App: React.FC = () => {
              title="Get Embed Code"
            >
              <Code className="w-4 h-4 text-indigo-400" />
-             <span className="hidden md:inline">تضمين (Embed)</span>
            </button>
 
            <button 
@@ -100,6 +139,18 @@ const App: React.FC = () => {
              <span>الموقع الرسمي</span>
            </button>
            
+           {/* Admin Toggle Button */}
+           <button 
+             onClick={() => setShowAdminPanel(true)}
+             className="p-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-slate-400 hover:text-white transition-colors relative"
+             title="Admin Console"
+           >
+             <Lock className="w-4 h-4" />
+             {archivedSessions.length > 0 && (
+                 <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 rounded-full border border-slate-900"></span>
+             )}
+           </button>
+
            <div className="h-6 w-px bg-white/10 mx-1 hidden md:block"></div>
 
            <div className="flex items-center gap-2 bg-black/20 px-3 py-1.5 rounded-full border border-white/5">
@@ -161,151 +212,83 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <main className="flex-1 flex flex-col md:flex-row pt-20 h-screen">
+      <main className="flex-1 flex flex-col items-center justify-center pt-20 h-screen relative overflow-hidden">
         
-        {/* Right Panel (Visualizer, Controls, Action Log) */}
-        <div className="flex-1 flex flex-col items-center p-4 md:p-8 relative overflow-hidden order-2 md:order-1">
+        {/* Error Banner */}
+        {hasError && (
+          <div className="absolute top-24 w-full max-w-md bg-red-500/10 border border-red-500/20 text-red-200 p-4 rounded-xl flex items-center gap-3 animate-in fade-in slide-in-from-top-4 z-50">
+            <AlertCircle className="w-5 h-5 text-red-500" />
+            <div className="text-sm">
+              <p className="font-semibold">فشل الاتصال بالنظام</p>
+              <p className="text-xs opacity-80">يرجى التأكد من إعداد مفتاح API بشكل صحيح.</p>
+            </div>
+            <button onClick={() => setHasError(false)} className="mr-auto hover:bg-red-500/20 p-1 rounded">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Background elements */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] md:w-[700px] h-[300px] md:h-[700px] bg-indigo-500/10 rounded-full blur-[60px] md:blur-[120px] pointer-events-none" />
+
+        {/* Central Orb */}
+        <div className="relative w-72 h-72 md:w-96 md:h-96 flex items-center justify-center z-10">
+            <div className={`absolute inset-0 rounded-full blur-3xl transition-all duration-700 ${isActive ? 'bg-indigo-600/30' : 'bg-transparent'}`} />
+            <div className={`absolute inset-0 rounded-full blur-2xl transition-all duration-300 ${isModelSpeaking ? 'bg-indigo-400/20 scale-110' : 'scale-100'}`} />
             
-            {/* Error Banner */}
-            {hasError && (
-              <div className="absolute top-4 w-full max-w-md bg-red-500/10 border border-red-500/20 text-red-200 p-4 rounded-xl flex items-center gap-3 animate-in fade-in slide-in-from-top-4 z-50">
-                <AlertCircle className="w-5 h-5 text-red-500" />
-                <div className="text-sm">
-                  <p className="font-semibold">فشل الاتصال بالنظام</p>
-                  <p className="text-xs opacity-80">يرجى التأكد من إعداد مفتاح API بشكل صحيح.</p>
-                </div>
-                <button onClick={() => setHasError(false)} className="mr-auto hover:bg-red-500/20 p-1 rounded">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-
-            {/* Visualizer & Orb Section */}
-            <div className="flex-1 flex flex-col items-center justify-center w-full relative">
-                {/* Background elements */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] md:w-[600px] h-[300px] md:h-[600px] bg-indigo-500/10 rounded-full blur-[60px] md:blur-[100px] pointer-events-none" />
-
-                <div className="relative w-64 h-64 md:w-80 md:h-80 flex items-center justify-center mb-8 z-10">
-                    <div className={`absolute inset-0 rounded-full blur-3xl transition-all duration-700 ${isActive ? 'bg-indigo-600/30' : 'bg-transparent'}`} />
-                    <div className={`absolute inset-0 rounded-full blur-2xl transition-all duration-300 ${isModelSpeaking ? 'bg-indigo-400/20 scale-110' : 'scale-100'}`} />
-                    
-                    <div className={`w-full h-full rounded-full border border-white/10 backdrop-blur-xl bg-white/5 flex flex-col items-center justify-center overflow-hidden relative shadow-2xl transition-all duration-500 ${isActive ? 'shadow-indigo-500/20 border-indigo-500/30' : ''}`}>
-                        <div className="absolute inset-0 flex flex-col opacity-60 pointer-events-none">
-                            <div className="flex-1">
-                                <AudioVisualizer analyser={outputAnalyser} isActive={isActive && isModelSpeaking} color="#818cf8" />
-                            </div>
-                            <div className="flex-1 rotate-180">
-                                <AudioVisualizer analyser={inputAnalyser} isActive={isActive && isUserSpeaking} color="#34d399" />
-                            </div>
-                        </div>
-
-                        <div className="z-10 text-center space-y-2 px-4">
-                            {status === LiveStatus.CONNECTING ? (
-                                <Loader2 className="w-12 h-12 text-indigo-400 animate-spin mx-auto" />
-                            ) : status === LiveStatus.CONNECTED ? (
-                                <div className="flex flex-col items-center gap-1">
-                                    {isModelSpeaking ? (
-                                        <span className="text-indigo-300 text-lg font-medium animate-pulse">أليكس يتحدث...</span>
-                                    ) : isUserSpeaking ? (
-                                        <span className="text-emerald-300 text-lg font-medium animate-pulse">جاري الاستماع...</span>
-                                    ) : (
-                                        <span className="text-slate-400 text-sm">أنا سامعك، اتفضل</span>
-                                    )}
-                                </div>
-                            ) : (
-                                <div className="text-slate-500 flex flex-col items-center">
-                                    <span className="text-sm uppercase tracking-widest mb-2 font-semibold">CRM Voice Agent</span>
-                                    <Phone className="w-8 h-8 opacity-50" />
-                                </div>
-                            )}
-                        </div>
+            <div className={`w-full h-full rounded-full border border-white/10 backdrop-blur-xl bg-white/5 flex flex-col items-center justify-center overflow-hidden relative shadow-2xl transition-all duration-500 ${isActive ? 'shadow-indigo-500/30 border-indigo-500/40' : ''}`}>
+                <div className="absolute inset-0 flex flex-col opacity-60 pointer-events-none">
+                    <div className="flex-1">
+                        <AudioVisualizer analyser={outputAnalyser} isActive={isActive && isModelSpeaking} color="#818cf8" />
+                    </div>
+                    <div className="flex-1 rotate-180">
+                        <AudioVisualizer analyser={inputAnalyser} isActive={isActive && isUserSpeaking} color="#34d399" />
                     </div>
                 </div>
 
-                {/* Main Buttons */}
-                <div className="flex gap-4 items-center z-20 mb-8">
-                    {!isActive ? (
-                        <button 
-                            onClick={connect}
-                            disabled={status === LiveStatus.CONNECTING}
-                            className="group relative flex items-center gap-3 px-10 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full font-bold text-lg transition-all shadow-xl hover:shadow-indigo-500/40 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95"
-                        >
-                            <Phone className="w-5 h-5 group-hover:animate-bounce" />
-                            <span>ابدأ النظام</span>
-                        </button>
-                    ) : (
-                        <button 
-                            onClick={disconnect}
-                            className="flex items-center gap-3 px-8 py-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-full font-semibold transition-all hover:shadow-lg hover:shadow-red-900/20 backdrop-blur-sm"
-                        >
-                            <X className="w-5 h-5" />
-                            <span>إنهاء</span>
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            {/* Action Log / CRM Capabilities */}
-            <div className="w-full max-w-2xl z-20 mt-auto bg-black/40 backdrop-blur-md rounded-t-2xl border-x border-t border-white/10 p-4 transition-all h-48 overflow-y-auto">
-                <div className="flex items-center gap-2 mb-3 text-xs text-slate-400 uppercase font-semibold tracking-wider sticky top-0 bg-transparent">
-                    نشاط الوكيل (Agent Actions)
-                </div>
-                <div className="space-y-2">
-                    {agentActions.length === 0 ? (
-                        <div className="text-center text-slate-500 text-sm py-4 border border-dashed border-white/10 rounded-lg">
-                            النظام جاهز لإجراء المكالمات إذا طُلب ذلك.
+                <div className="z-10 text-center space-y-4 px-8">
+                    {status === LiveStatus.CONNECTING ? (
+                        <Loader2 className="w-16 h-16 text-indigo-400 animate-spin mx-auto" />
+                    ) : status === LiveStatus.CONNECTED ? (
+                        <div className="flex flex-col items-center gap-2">
+                            {isModelSpeaking ? (
+                                <span className="text-indigo-300 text-xl font-medium animate-pulse">أليكس يتحدث...</span>
+                            ) : isUserSpeaking ? (
+                                <span className="text-emerald-300 text-xl font-medium animate-pulse">جاري الاستماع...</span>
+                            ) : (
+                                <span className="text-slate-400 text-base">أنا سامعك، اتفضل</span>
+                            )}
                         </div>
                     ) : (
-                        agentActions.map((action) => (
-                            <div key={action.id} className="flex items-center justify-between bg-white/5 p-3 rounded-lg border border-white/5 animate-in slide-in-from-bottom-2 fade-in">
-                                <div className="flex items-center gap-3">
-                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center bg-indigo-500/20 text-indigo-400`}>
-                                        <PhoneOutgoing className="w-4 h-4" />
-                                    </div>
-                                    <div>
-                                        <p className="text-sm font-medium text-slate-200">اتصال صادر</p>
-                                        <p className="text-xs text-slate-400">{action.details}</p>
-                                    </div>
-                                </div>
-                                <span className="text-[10px] bg-green-500/10 text-green-400 px-2 py-1 rounded border border-green-500/20">
-                                    تم التنفيذ
-                                </span>
-                            </div>
-                        ))
+                        <div className="text-slate-500 flex flex-col items-center animate-pulse">
+                            <span className="text-sm uppercase tracking-widest mb-3 font-semibold">مساعد القبول الذكي</span>
+                            <Phone className="w-10 h-10 opacity-50" />
+                        </div>
                     )}
                 </div>
             </div>
         </div>
 
-        {/* Left Panel (Transcript) */}
-        <div className="w-full md:w-1/3 border-t md:border-t-0 md:border-r border-white/10 bg-black/20 flex flex-col h-1/2 md:h-full transition-all order-1 md:order-2">
-            <div className="p-4 border-b border-white/10 bg-white/5 backdrop-blur-sm flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    <MessageSquare className="w-4 h-4 text-indigo-400" />
-                    <h2 className="text-sm font-semibold text-slate-200">سجل المحادثة</h2>
-                </div>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide relative">
-                {transcripts.map((item) => (
-                    <div 
-                        key={item.id} 
-                        className={`flex flex-col ${item.sender === 'user' ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}
-                    >
-                        <div className={`max-w-[85%] rounded-2xl px-5 py-3 text-sm leading-relaxed shadow-sm ${
-                            item.sender === 'user' 
-                                ? 'bg-indigo-600 text-white rounded-br-none' 
-                                : 'bg-slate-700 text-slate-100 rounded-bl-none border border-slate-600'
-                        }`}>
-                            {item.text}
-                        </div>
-                        <span className="text-[10px] text-slate-500 mt-1.5 px-1 font-medium">
-                            {item.sender === 'user' ? 'أنت' : 'أليكس'}
-                        </span>
-                    </div>
-                ))}
-                <div ref={messagesEndRef} />
-            </div>
+        {/* Main Controls */}
+        <div className="mt-12 z-20">
+            {!isActive ? (
+                <button 
+                    onClick={connect}
+                    disabled={status === LiveStatus.CONNECTING}
+                    className="group relative flex items-center gap-3 px-12 py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full font-bold text-xl transition-all shadow-xl hover:shadow-indigo-500/40 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 active:scale-95 ring-4 ring-indigo-500/20"
+                >
+                    <Phone className="w-6 h-6 group-hover:animate-bounce" />
+                    <span>تحدث مع أليكس</span>
+                </button>
+            ) : (
+                <button 
+                    onClick={disconnect}
+                    className="flex items-center gap-3 px-10 py-4 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-full font-semibold text-lg transition-all hover:shadow-lg hover:shadow-red-900/20 backdrop-blur-sm"
+                >
+                    <X className="w-6 h-6" />
+                    <span>إنهاء المكالمة</span>
+                </button>
+            )}
         </div>
 
       </main>

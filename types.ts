@@ -1,3 +1,4 @@
+
 export enum LiveStatus {
   DISCONNECTED = 'disconnected',
   CONNECTING = 'connecting',
@@ -24,6 +25,25 @@ export interface AgentAction {
   details: string; // e.g., "Calling +201..."
   status: 'pending' | 'completed';
   timestamp: Date;
+}
+
+export interface LeadForm {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string;
+  interest?: string;
+  timestamp: Date;
+}
+
+export interface ArchivedSession {
+  id: string;
+  startTime: Date;
+  endTime: Date;
+  audioBlob: Blob | null;
+  transcripts: TranscriptItem[];
+  actions: AgentAction[];
+  leads: LeadForm[];
 }
 
 export const DEFAULT_VOICE_NAME = 'Zephyr';

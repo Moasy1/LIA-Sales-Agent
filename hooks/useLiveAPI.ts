@@ -1,7 +1,8 @@
+
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, FunctionDeclaration, Type } from '@google/genai';
 import { createBlob, decode, decodeAudioData } from '../services/audioUtils';
-import { LiveStatus, TranscriptItem, AgentAction } from '../types';
+import { LiveStatus, TranscriptItem, AgentAction, LeadForm } from '../types';
 
 // Define the Tools
 const tools: FunctionDeclaration[] = [
@@ -23,14 +24,30 @@ const tools: FunctionDeclaration[] = [
       required: ['phoneNumber', 'reason'],
     },
   },
+  {
+    name: 'submit_lead_form',
+    description: 'Save student information into the academy CRM/Spreadsheet when they express interest or provide details.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: { type: Type.STRING, description: 'Student Name' },
+        phone: { type: Type.STRING, description: 'Student Phone Number' },
+        email: { type: Type.STRING, description: 'Student Email Address (optional)' },
+        interest: { type: Type.STRING, description: 'Diploma or Course of interest (optional)' },
+      },
+      required: ['name', 'phone'],
+    },
+  },
 ];
 
 export const useLiveAPI = () => {
   const [status, setStatus] = useState<LiveStatus>(LiveStatus.DISCONNECTED);
   const [transcripts, setTranscripts] = useState<TranscriptItem[]>([]);
   const [agentActions, setAgentActions] = useState<AgentAction[]>([]);
+  const [leads, setLeads] = useState<LeadForm[]>([]);
   const [isUserSpeaking, setIsUserSpeaking] = useState(false);
   const [isModelSpeaking, setIsModelSpeaking] = useState(false);
+  const [userAudioBlob, setUserAudioBlob] = useState<Blob | null>(null);
   
   const inputAudioContextRef = useRef<AudioContext | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
@@ -39,7 +56,12 @@ export const useLiveAPI = () => {
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const scheduledSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+  const audioStreamDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
   
+  // Recorder refs
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
   const currentInputTranscription = useRef('');
   const currentOutputTranscription = useRef('');
 
@@ -47,6 +69,11 @@ export const useLiveAPI = () => {
   const outputAnalyserRef = useRef<AnalyserNode | null>(null);
 
   const disconnect = useCallback(() => {
+    // Stop Recorder
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+
     if (inputAudioContextRef.current) {
       inputAudioContextRef.current.close();
       inputAudioContextRef.current = null;
@@ -75,6 +102,7 @@ export const useLiveAPI = () => {
     sourceNodeRef.current = null;
     inputAnalyserRef.current = null;
     outputAnalyserRef.current = null;
+    audioStreamDestinationRef.current = null;
   }, []);
 
   const connect = useCallback(async () => {
@@ -82,17 +110,17 @@ export const useLiveAPI = () => {
 
     try {
       setStatus(LiveStatus.CONNECTING);
+      setTranscripts([]);
+      setAgentActions([]);
+      setLeads([]);
+      setUserAudioBlob(null);
+      audioChunksRef.current = [];
       
-      // Robust API Key check for Vite/Browser environments
-      let apiKey = "";
-      try {
-        apiKey = process.env.API_KEY || "";
-      } catch (e) {
-        // process is undefined
-      }
+      // Safe access to API Key
+      const apiKey = process.env.API_KEY;
 
       if (!apiKey) {
-        console.error("API Key is missing. Please check your .env file or Vercel settings.");
+        console.error("API Key is missing.");
         setStatus(LiveStatus.ERROR);
         return;
       }
@@ -108,12 +136,36 @@ export const useLiveAPI = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
 
+      // --- RECORDING SETUP (MIXED AUDIO) ---
+      if (outputAudioContextRef.current) {
+        const dest = outputAudioContextRef.current.createMediaStreamDestination();
+        audioStreamDestinationRef.current = dest;
+
+        // Add Mic to Mix
+        const micSourceForRecord = outputAudioContextRef.current.createMediaStreamSource(stream);
+        micSourceForRecord.connect(dest);
+
+        // Start Recording on Mixed Stream
+        const recorder = new MediaRecorder(dest.stream);
+        mediaRecorderRef.current = recorder;
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            audioChunksRef.current.push(e.data);
+          }
+        };
+        recorder.onstop = () => {
+          const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          setUserAudioBlob(blob);
+        };
+        recorder.start();
+      }
+
       const ai = new GoogleGenAI({ apiKey });
       
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         config: {
-          responseModalities: [Modality.AUDIO],
+          responseModalities: ['AUDIO'],
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
           },
@@ -133,13 +185,13 @@ export const useLiveAPI = () => {
 - **السعر:** 3,800 كاش أو 4,000 تقسيط.
 
 قدراتك كوكيل ذكي (Agent Capabilities):
-1. **إجراء المكالمات (Outbound Calls):** يمكنك الاتصال بالطلاب لمتابعة الحجز أو الرد على الاستفسارات المعقدة. إذا طلب العميل مكالمة، استخدم الأداة \`start_outbound_call\`.
+1. **إجراء المكالمات (Outbound Calls):** يمكنك الاتصال بالطلاب. استخدم \`start_outbound_call\`.
+2. **تسجيل البيانات (Forms):** لو العميل قال اسمه ورقمه أو أبدى اهتمام، سجل بياناته فوراً في السيستم باستخدام \`submit_lead_form\`.
 
 تعليمات الشخصية والأسلوب:
 1. **اللغة:** تحدث فقط باللهجة المصرية العامية (Masri).
 2. **التعريف:** ابدأ بـ "أهلاً بيك في London Innovation Academy، أنا أليكس".
-3. **التفاعل:** لو العميل عايز يكلم حد بشري أو محتاج تفصيل أكتر، اعرض عليه تتصل بيه حالا واستخدم أداة الاتصال.
-4. **ملاحظة هامة:** أنت لا تتحكم في الواتساب. إذا طلب العميل إرسال شيء على واتساب، أخبره أنك ستقوم بتجهيز البيانات ولكن اطلب منه استخدام زر الواتساب الموجود في الموقع للتواصل المباشر.
+3. **التفاعل:** كن متعاوناً جداً. حاول دائماً الحصول على بيانات العميل (الاسم ورقم الهاتف) لتسجيله في السيستم.
 
 المصادر الإضافية:
 1. الموقع الرئيسي: https://london-innovation-academy.com/
@@ -186,7 +238,7 @@ export const useLiveAPI = () => {
               const functionResponses: any[] = [];
               message.toolCall.functionCalls.forEach((fc) => {
                 console.log('Function triggered:', fc.name, fc.args);
-                // Only handle calls
+                
                 if (fc.name === 'start_outbound_call') {
                     const newAction: AgentAction = {
                         id: fc.id,
@@ -199,10 +251,24 @@ export const useLiveAPI = () => {
                     functionResponses.push({
                         id: fc.id,
                         name: fc.name,
-                        response: { result: "success", info: "Call initiated successfully." }
+                        response: { result: "success", info: "Call initiated." }
+                    });
+                } else if (fc.name === 'submit_lead_form') {
+                    const newLead: LeadForm = {
+                        id: fc.id,
+                        name: fc.args.name as string,
+                        phone: fc.args.phone as string,
+                        email: fc.args.email as string,
+                        interest: fc.args.interest as string,
+                        timestamp: new Date()
+                    };
+                    setLeads(prev => [newLead, ...prev]);
+                    functionResponses.push({
+                        id: fc.id,
+                        name: fc.name,
+                        response: { result: "success", info: "Lead saved to sheet." }
                     });
                 } else {
-                     // Fallback for unknown tools
                      functionResponses.push({
                         id: fc.id,
                         name: fc.name,
@@ -228,12 +294,19 @@ export const useLiveAPI = () => {
               source.buffer = audioBuffer;
               
               const gainNode = ctx.createGain();
+              
+              // 1. Connect to Analyser and Speakers
               if (outputAnalyserRef.current) {
                  source.connect(gainNode);
                  gainNode.connect(outputAnalyserRef.current);
                  outputAnalyserRef.current.connect(ctx.destination);
               } else {
                  source.connect(ctx.destination);
+              }
+
+              // 2. Connect to Recorder Mix
+              if (audioStreamDestinationRef.current) {
+                source.connect(audioStreamDestinationRef.current);
               }
 
               source.addEventListener('ended', () => {
@@ -312,9 +385,11 @@ export const useLiveAPI = () => {
     status,
     transcripts,
     agentActions,
+    leads,
     isUserSpeaking,
     isModelSpeaking,
     inputAnalyser: inputAnalyserRef.current,
-    outputAnalyser: outputAnalyserRef.current
+    outputAnalyser: outputAnalyserRef.current,
+    userAudioBlob
   };
 };
