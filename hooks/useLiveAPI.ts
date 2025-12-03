@@ -1,6 +1,6 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { GoogleGenAI, LiveServerMessage, FunctionDeclaration, Type } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, FunctionDeclaration, Type, Modality } from '@google/genai';
 import { createBlob, decode, decodeAudioData } from '../services/audioUtils';
 import { LiveStatus, TranscriptItem, AgentAction, LeadForm } from '../types';
 
@@ -165,7 +165,7 @@ export const useLiveAPI = () => {
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         config: {
-          responseModalities: ['AUDIO'],
+          responseModalities: [Modality.AUDIO],
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
           },

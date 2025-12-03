@@ -1,10 +1,11 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useLiveAPI } from './hooks/useLiveAPI';
-import { LiveStatus, ArchivedSession, TranscriptItem, AgentAction, LeadForm } from './types';
+import { LiveStatus, ArchivedSession } from './types';
+import { saveSessionToDb, getAllSessionsFromDb } from './services/storage';
 import AudioVisualizer from './components/AudioVisualizer';
 import AdminDashboard from './components/AdminDashboard';
-import { Mic, MicOff, Phone, X, Loader2, ExternalLink, Globe, AlertCircle, Code, Copy, Check, Download, Lock } from 'lucide-react';
+import { Phone, X, Loader2, Code, Globe, AlertCircle, Lock, Check, Copy } from 'lucide-react';
 
 const App: React.FC = () => {
   const { 
@@ -26,9 +27,18 @@ const App: React.FC = () => {
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [copiedType, setCopiedType] = useState<'widget' | 'embed' | null>(null);
 
-  // Local "Database" of past sessions
+  // Loaded from IndexedDB
   const [archivedSessions, setArchivedSessions] = useState<ArchivedSession[]>([]);
+
   const currentSessionStartTime = useRef<Date | null>(null);
+  const hasSavedCurrentSession = useRef<boolean>(false);
+
+  // Load History on Mount
+  useEffect(() => {
+    getAllSessionsFromDb().then(sessions => {
+        setArchivedSessions(sessions);
+    });
+  }, []);
 
   // Track error status
   useEffect(() => {
@@ -41,31 +51,33 @@ const App: React.FC = () => {
     // Session Start Tracker
     if (status === LiveStatus.CONNECTED && !currentSessionStartTime.current) {
         currentSessionStartTime.current = new Date();
+        hasSavedCurrentSession.current = false;
     }
   }, [status]);
 
-  // Archive Session Logic
-  // We trigger this when status goes from CONNECTED to DISCONNECTED, OR when userAudioBlob becomes available after stop.
-  // The useLiveAPI creates the blob *after* stop.
+  // Archive Session Logic (Save to DB)
   useEffect(() => {
-    if (status === LiveStatus.DISCONNECTED && userAudioBlob && currentSessionStartTime.current) {
-        const newArchive: ArchivedSession = {
-            id: Math.random().toString(36).substring(7).toUpperCase(),
-            startTime: currentSessionStartTime.current,
-            endTime: new Date(),
-            audioBlob: userAudioBlob,
-            transcripts: [...transcripts],
-            actions: [...agentActions],
-            leads: [...leads]
-        };
-        
-        // Prevent duplicate archives if effect runs twice
-        setArchivedSessions(prev => {
-            if (prev.find(s => s.startTime === newArchive.startTime)) return prev;
-            return [newArchive, ...prev];
-        });
-        
-        // Reset start time
+    if (status === LiveStatus.DISCONNECTED && currentSessionStartTime.current && !hasSavedCurrentSession.current) {
+        // Only save if we have some data interaction
+        if (transcripts.length > 0 || userAudioBlob) {
+            const newArchive: ArchivedSession = {
+                id: Math.random().toString(36).substring(7).toUpperCase(),
+                startTime: currentSessionStartTime.current,
+                endTime: new Date(),
+                audioBlob: userAudioBlob, 
+                transcripts: [...transcripts],
+                actions: [...agentActions],
+                leads: [...leads]
+            };
+            
+            // 1. Save to Database (Persist Audio)
+            saveSessionToDb(newArchive).then(() => {
+                // 2. Reload local state to show in dashboard
+                getAllSessionsFromDb().then(setArchivedSessions);
+            });
+            
+            hasSavedCurrentSession.current = true;
+        }
         currentSessionStartTime.current = null;
     }
   }, [status, userAudioBlob, transcripts, agentActions, leads]);
@@ -209,6 +221,14 @@ const App: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Success Notification for Leads */}
+      {leads.length > 0 && isActive && (
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 bg-emerald-500/20 border border-emerald-500/30 text-emerald-200 px-6 py-3 rounded-full flex items-center gap-3 animate-in fade-in slide-in-from-top-4 z-40 backdrop-blur-md shadow-xl">
+            <Check className="w-5 h-5 text-emerald-400" />
+            <span className="font-medium">Lead captured successfully!</span>
         </div>
       )}
 
