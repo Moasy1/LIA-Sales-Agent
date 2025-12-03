@@ -1,10 +1,11 @@
 
 import React, { useState, useMemo } from 'react';
 import { ArchivedSession, TranscriptItem } from '../types';
+import { syncPendingSessions, getAllSessionsFromDb } from '../services/storage';
 import { 
   X, Play, FileSpreadsheet, PhoneOutgoing, Mic, Download, 
   FileText, MessageSquare, Clock, Calendar, User, ChevronDown, ChevronUp,
-  Search, Filter, CheckCircle2
+  Search, Filter, CheckCircle2, Cloud, CloudOff, RefreshCw
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -12,18 +13,20 @@ interface AdminDashboardProps {
   onClose: () => void;
 }
 
-const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions, onClose }) => {
+const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessions, onClose }) => {
+  const [sessions, setSessions] = useState<ArchivedSession[]>(initialSessions);
   const [activeView, setActiveView] = useState<'sessions' | 'leads' | 'logs'>('sessions');
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [expandedSession, setExpandedSession] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Derived Statistics
   const stats = useMemo(() => {
     return {
         totalCalls: sessions.length,
         totalLeads: sessions.reduce((acc, s) => acc + s.leads.length, 0),
-        totalActions: sessions.reduce((acc, s) => acc + s.actions.length, 0),
+        pendingSync: sessions.filter(s => !s.synced).length,
         avgDuration: sessions.length > 0 
             ? Math.round(sessions.reduce((acc, s) => acc + (s.endTime.getTime() - s.startTime.getTime())/1000, 0) / sessions.length) 
             : 0
@@ -39,13 +42,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions, onClose }) =>
     setPlayingAudio(id);
   };
 
+  const handleSync = async () => {
+    setIsSyncing(true);
+    await syncPendingSessions();
+    // Refresh list
+    const updatedSessions = await getAllSessionsFromDb();
+    setSessions(updatedSessions);
+    setIsSyncing(false);
+  };
+
   const exportToCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Session ID,Name,Phone,Email,Interest,Timestamp\n";
+    csvContent += "Session ID,Name,Phone,Email,Interest,Timestamp,Synced\n";
 
     sessions.forEach(session => {
         session.leads.forEach(lead => {
-            const row = `${session.id},${lead.name},${lead.phone},${lead.email || ''},${lead.interest || ''},${lead.timestamp.toLocaleString()}\n`;
+            const row = `${session.id},${lead.name},${lead.phone},${lead.email || ''},${lead.interest || ''},${lead.timestamp.toLocaleString()},${session.synced ? 'Yes' : 'No'}\n`;
             csvContent += row;
         });
     });
@@ -79,15 +91,25 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions, onClose }) =>
                     <div className="flex items-center gap-3 text-xs text-slate-400">
                         <span>{stats.totalCalls} Calls</span>
                         <span className="w-1 h-1 bg-slate-600 rounded-full"></span>
-                        <span>{stats.totalLeads} Leads Captured</span>
-                        <span className="w-1 h-1 bg-slate-600 rounded-full"></span>
-                        <span>{stats.avgDuration}s Avg Duration</span>
+                        <span className={stats.pendingSync > 0 ? "text-amber-400 font-bold" : ""}>{stats.pendingSync} Pending Upload</span>
                     </div>
                 </div>
             </div>
-            <button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition">
-                <X className="w-6 h-6" />
-            </button>
+            
+            <div className="flex items-center gap-3">
+                <button 
+                    onClick={handleSync}
+                    disabled={isSyncing || stats.pendingSync === 0}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-md text-xs font-medium text-slate-300 disabled:opacity-50 transition-all"
+                >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                    {isSyncing ? 'Syncing...' : 'Sync Now'}
+                </button>
+                <div className="h-6 w-px bg-slate-700"></div>
+                <button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition">
+                    <X className="w-6 h-6" />
+                </button>
+            </div>
         </div>
 
         <div className="flex flex-1 overflow-hidden">
@@ -148,8 +170,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions, onClose }) =>
                                     {/* Session Header Card */}
                                     <div className="p-4 flex items-center justify-between">
                                         <div className="flex items-center gap-4">
-                                            <div className="w-12 h-12 rounded-full bg-indigo-900/50 flex items-center justify-center text-indigo-400 font-bold border border-indigo-500/20">
+                                            <div className="w-12 h-12 rounded-full bg-indigo-900/50 flex items-center justify-center text-indigo-400 font-bold border border-indigo-500/20 relative">
                                                 {session.id.substring(0, 2)}
+                                                <div className="absolute -bottom-1 -right-1 bg-slate-900 rounded-full p-0.5 border border-slate-700">
+                                                    {session.synced ? (
+                                                        <Cloud className="w-3.5 h-3.5 text-emerald-500" />
+                                                    ) : (
+                                                        <CloudOff className="w-3.5 h-3.5 text-amber-500" />
+                                                    )}
+                                                </div>
                                             </div>
                                             <div>
                                                 <div className="flex items-center gap-2">
@@ -251,15 +280,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions, onClose }) =>
                                         <th className="px-6 py-4">Name</th>
                                         <th className="px-6 py-4">Phone Number</th>
                                         <th className="px-6 py-4">Interest</th>
-                                        <th className="px-6 py-4">Session ID</th>
+                                        <th className="px-6 py-4">Sync Status</th>
                                         <th className="px-6 py-4">Captured At</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-700">
-                                    {sessions.flatMap(s => s.leads.map(l => ({...l, sessionId: s.id}))).length === 0 ? (
+                                    {sessions.flatMap(s => s.leads.map(l => ({...l, sessionId: s.id, synced: s.synced}))).length === 0 ? (
                                         <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-500 italic">No leads captured yet.</td></tr>
                                     ) : (
-                                        sessions.flatMap(s => s.leads.map(l => ({...l, sessionId: s.id}))).map((lead) => (
+                                        sessions.flatMap(s => s.leads.map(l => ({...l, sessionId: s.id, synced: s.synced}))).map((lead) => (
                                             <tr key={lead.id} className="hover:bg-slate-800/50 transition-colors">
                                                 <td className="px-6 py-4 font-bold text-white flex items-center gap-2">
                                                     <div className="w-6 h-6 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-xs">
@@ -273,7 +302,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions, onClose }) =>
                                                         {lead.interest || 'General Inquiry'}
                                                     </span>
                                                 </td>
-                                                <td className="px-6 py-4 font-mono text-xs">{lead.sessionId}</td>
+                                                <td className="px-6 py-4">
+                                                    {lead.synced ? (
+                                                        <span className="flex items-center gap-1 text-emerald-400 text-xs font-medium"><Cloud className="w-3 h-3" /> Synced</span>
+                                                    ) : (
+                                                        <span className="flex items-center gap-1 text-amber-500 text-xs font-medium"><CloudOff className="w-3 h-3" /> Pending</span>
+                                                    )}
+                                                </td>
                                                 <td className="px-6 py-4">{new Date(lead.timestamp).toLocaleString()}</td>
                                             </tr>
                                         ))

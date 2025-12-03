@@ -44,6 +44,7 @@ export interface ArchivedSession {
   transcripts: TranscriptItem[];
   actions: AgentAction[];
   leads: LeadForm[];
+  synced?: boolean; // New flag to track if uploaded to Vercel Backend
 }
 
 export const DEFAULT_VOICE_NAME = 'Zephyr';
