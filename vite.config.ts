@@ -1,4 +1,3 @@
-
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -9,9 +8,9 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     define: {
       'process.env': {
-        API_KEY: env.API_KEY || "AIzaSyA2q-2Bas3ueDR6tnrmI_kh83X8sskLO30", // Fallback to ensure it works
-        VITE_BACKEND_URL: env.VITE_BACKEND_URL || "https://lia-sales-agent.vercel.app" 
-      }
+        API_KEY: env.API_KEY || "AIzaSyA2q-2Bas3ueDR6tnrmI_kh83X8sskLO30",
+        VITE_BACKEND_URL: env.VITE_BACKEND_URL,
+      },
     },
   };
 });

@@ -1,10 +1,12 @@
-
 import { ArchivedSession, KnowledgeItem } from '../types';
+import { db, storage } from './firebase';
+import { collection, doc, setDoc, writeBatch } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 const DB_NAME = 'LIA_Voice_Agent_DB';
 const STORE_SESSIONS = 'sessions';
 const STORE_KNOWLEDGE = 'knowledge';
-const DB_VERSION = 2; // Upgraded to support Knowledge Store
+const DB_VERSION = 2;
 
 /**
  * Open the IndexedDB database.
@@ -16,12 +18,10 @@ const openDB = (): Promise<IDBDatabase> => {
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
       
-      // Create Sessions Store
       if (!db.objectStoreNames.contains(STORE_SESSIONS)) {
         db.createObjectStore(STORE_SESSIONS, { keyPath: 'id' });
       }
 
-      // Create Knowledge Store (New in v2)
       if (!db.objectStoreNames.contains(STORE_KNOWLEDGE)) {
         db.createObjectStore(STORE_KNOWLEDGE, { keyPath: 'id' });
       }
@@ -60,51 +60,86 @@ const markSessionAsSynced = async (id: string) => {
 };
 
 /**
- * --- BACKEND INTEGRATION POINT ---
+ * --- FIREBASE INTEGRATION POINT ---
  */
-const getBackendUrl = () => {
-    let url = process.env.VITE_BACKEND_URL || '';
-    if (url.endsWith('/')) {
-        url = url.slice(0, -1);
-    }
-    return url;
-};
-
 const uploadSessionToBackend = async (session: ArchivedSession): Promise<boolean> => {
-    const backendUrl = getBackendUrl();
-    if (!backendUrl) {
-        console.log("Skipping server upload: VITE_BACKEND_URL not set.");
+    if (!db || !storage) {
+        console.log("Skipping sync: Firebase not initialized.");
         return false;
     }
 
     try {
-        const formData = new FormData();
-        formData.append('id', session.id);
-        formData.append('data', JSON.stringify({
-            transcripts: session.transcripts,
-            actions: session.actions,
-            leads: session.leads,
-            startTime: session.startTime,
-            endTime: session.endTime
-        }));
+        console.log(`Starting upload for session ${session.id}...`);
 
+        let audioDownloadUrl = null;
+
+        // 1. Upload Audio to Firebase Storage (if exists)
         if (session.audioBlob) {
-            formData.append('audio', session.audioBlob, `session-${session.id}.webm`);
+            const storageRef = ref(storage, `recordings/session-${session.id}.webm`);
+            await uploadBytes(storageRef, session.audioBlob);
+            audioDownloadUrl = await getDownloadURL(storageRef);
+            console.log("Audio uploaded:", audioDownloadUrl);
         }
 
-        const response = await fetch(`${backendUrl}/api/sessions`, {
-            method: 'POST',
-            body: formData
-        });
+        // 2. Prepare Data for Firestore
+        // CRITICAL FIX: Firestore throws error on 'undefined'. We must convert undefined optional fields to null.
+        // We also explicitly convert Date objects to ISO strings to ensure serialization works perfectly.
+        const sessionData = {
+            id: session.id,
+            startTime: session.startTime.toISOString(),
+            endTime: session.endTime.toISOString(),
+            transcripts: session.transcripts.map(t => ({
+                id: t.id,
+                sender: t.sender,
+                text: t.text,
+                timestamp: t.timestamp.toISOString()
+            })),
+            actions: session.actions.map(a => ({
+                id: a.id,
+                type: a.type,
+                details: a.details,
+                status: a.status,
+                timestamp: a.timestamp.toISOString()
+            })),
+            leads: session.leads.map(l => ({
+                id: l.id,
+                name: l.name,
+                phone: l.phone,
+                email: l.email || null,     // Fix: undefined -> null
+                interest: l.interest || null, // Fix: undefined -> null
+                timestamp: l.timestamp.toISOString()
+            })),
+            audioUrl: audioDownloadUrl || null,
+            uploadedAt: new Date().toISOString()
+        };
 
-        if (!response.ok) throw new Error(`Server error: ${response.status}`);
-        
-        console.log("Session successfully uploaded to backend!");
+        // 3. Save Session Document
+        await setDoc(doc(db, "sessions", session.id), sessionData);
+
+        // 4. Save Leads to a separate collection for easier CRM management
+        if (session.leads.length > 0) {
+            const batch = writeBatch(db);
+            session.leads.forEach(lead => {
+                const leadRef = doc(db, "leads", lead.id);
+                batch.set(leadRef, {
+                    id: lead.id,
+                    name: lead.name,
+                    phone: lead.phone,
+                    email: lead.email || null,
+                    interest: lead.interest || null,
+                    sessionId: session.id,
+                    timestamp: lead.timestamp.toISOString()
+                });
+            });
+            await batch.commit();
+        }
+
+        console.log("Session saved to Firestore!");
         await markSessionAsSynced(session.id);
         return true;
 
     } catch (error) {
-        console.error("Failed to upload session to backend:", error);
+        console.error("Failed to upload session to Firebase:", error);
         return false;
     }
 }
@@ -125,6 +160,7 @@ export const saveSessionToDb = async (session: ArchivedSession): Promise<void> =
     return new Promise((resolve, reject) => {
       tx.oncomplete = () => {
         console.log('Session saved locally:', session.id);
+        // Attempt immediate sync
         uploadSessionToBackend(session); 
         resolve();
       };
@@ -177,6 +213,8 @@ export const syncPendingSessions = async (): Promise<number> => {
 };
 
 // --- KNOWLEDGE BASE FUNCTIONS ---
+// Note: Currently these only exist locally in IndexedDB. 
+// In a full implementation, you would also sync these to a 'knowledge' collection in Firestore.
 
 export const saveKnowledgeItem = async (item: KnowledgeItem): Promise<void> => {
   const db = await openDB();
@@ -196,7 +234,6 @@ export const getKnowledgeItems = async (): Promise<KnowledgeItem[]> => {
   const request = store.getAll();
   return new Promise((resolve, reject) => {
     request.onsuccess = () => {
-        // Sort active first, then date
         const res = request.result as KnowledgeItem[];
         res.sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1));
         resolve(res);
