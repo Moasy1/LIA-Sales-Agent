@@ -240,7 +240,10 @@ const App: React.FC = () => {
             <AlertCircle className="w-5 h-5 text-red-500" />
             <div className="text-sm">
               <p className="font-semibold">فشل الاتصال بالنظام</p>
-              <p className="text-xs opacity-80">يرجى التأكد من إعداد مفتاح API بشكل صحيح.</p>
+              <p className="text-xs opacity-80">
+                1. تأكد من إعداد مفتاح API بشكل صحيح.<br/>
+                2. تأكد من أن مفتاح API غير مقيد بـ localhost في إعدادات Google.
+              </p>
             </div>
             <button onClick={() => setHasError(false)} className="mr-auto hover:bg-red-500/20 p-1 rounded">
               <X className="w-4 h-4" />

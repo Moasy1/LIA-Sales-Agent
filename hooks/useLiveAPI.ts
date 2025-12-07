@@ -58,6 +58,7 @@ export const useLiveAPI = () => {
   const nextStartTimeRef = useRef<number>(0);
   const scheduledSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const audioStreamDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const isConnectedRef = useRef<boolean>(false);
   
   // Recorder refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -70,9 +71,22 @@ export const useLiveAPI = () => {
   const outputAnalyserRef = useRef<AnalyserNode | null>(null);
 
   const disconnect = useCallback(() => {
+    isConnectedRef.current = false;
+    
     // Stop Recorder
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
+    }
+
+    if (processorRef.current) {
+        processorRef.current.disconnect();
+        processorRef.current.onaudioprocess = null;
+        processorRef.current = null;
+    }
+
+    if (sourceNodeRef.current) {
+        sourceNodeRef.current.disconnect();
+        sourceNodeRef.current = null;
     }
 
     if (inputAudioContextRef.current) {
@@ -99,8 +113,6 @@ export const useLiveAPI = () => {
     setIsModelSpeaking(false);
     nextStartTimeRef.current = 0;
     
-    processorRef.current = null;
-    sourceNodeRef.current = null;
     inputAnalyserRef.current = null;
     outputAnalyserRef.current = null;
     audioStreamDestinationRef.current = null;
@@ -111,6 +123,7 @@ export const useLiveAPI = () => {
 
     try {
       setStatus(LiveStatus.CONNECTING);
+      isConnectedRef.current = true;
       setTranscripts([]);
       setAgentActions([]);
       setLeads([]);
@@ -232,7 +245,7 @@ ${activeKnowledge}
             console.log('Gemini Live API Connected');
             setStatus(LiveStatus.CONNECTED);
 
-            if (!inputAudioContextRef.current || !mediaStreamRef.current) return;
+            if (!inputAudioContextRef.current || !mediaStreamRef.current || !isConnectedRef.current) return;
 
             const inputCtx = inputAudioContextRef.current;
             const source = inputCtx.createMediaStreamSource(stream);
@@ -246,6 +259,9 @@ ${activeKnowledge}
             processorRef.current = scriptProcessor;
 
             scriptProcessor.onaudioprocess = (e) => {
+              // CRITICAL: Guard against sending data if disconnected
+              if (!isConnectedRef.current || !inputAudioContextRef.current) return;
+
               const inputData = e.inputBuffer.getChannelData(0);
               let sum = 0;
               for(let i=0; i<inputData.length; i++) sum += inputData[i] * inputData[i];
@@ -255,7 +271,10 @@ ${activeKnowledge}
               // IMPORTANT: Pass the actual sample rate to createBlob
               const pcmBlob = createBlob(inputData, inputCtx.sampleRate);
               sessionPromise.then((session) => {
-                session.sendRealtimeInput({ media: pcmBlob });
+                 // Double check before sending
+                 if (isConnectedRef.current) {
+                    session.sendRealtimeInput({ media: pcmBlob });
+                 }
               });
             };
 
@@ -313,7 +332,7 @@ ${activeKnowledge}
             }
 
             const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-            if (base64Audio && outputAudioContextRef.current) {
+            if (base64Audio && outputAudioContextRef.current && isConnectedRef.current) {
               setIsModelSpeaking(true);
               const ctx = outputAudioContextRef.current;
               nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);

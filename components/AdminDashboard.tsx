@@ -18,7 +18,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessio
   const [sessions, setSessions] = useState<ArchivedSession[]>(initialSessions);
   const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([]);
   const [activeView, setActiveView] = useState<'analytics' | 'brain' | 'sessions' | 'leads' | 'logs'>('analytics');
-  const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [expandedSession, setExpandedSession] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
@@ -70,22 +69,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessio
         dailyActivity: last7Days.map(d => ({ date: d, count: dailyActivity[d] }))
     };
   }, [sessions]);
-
-  const handlePlay = (blob: Blob | null, id: string) => {
-    if (!blob) return;
-    try {
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.play().catch(e => {
-            console.error("Playback failed:", e);
-            alert("Error playing audio. The format might not be supported by your browser.");
-        });
-        audio.onended = () => setPlayingAudio(null);
-        setPlayingAudio(id);
-    } catch (e) {
-        console.error("Error creating audio object:", e);
-    }
-  };
 
   const handleSync = async () => {
     setIsSyncing(true);
@@ -487,24 +470,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessio
                                         </div>
 
                                         <div className="flex items-center gap-3">
-                                            {/* Audio Player Controls */}
+                                            {/* Native Audio Player for Better Compatibility */}
                                             {session.audioBlob && (
-                                                <div className="flex items-center gap-2 bg-slate-900/50 p-1.5 rounded-lg border border-slate-700/50">
-                                                    <button 
-                                                        onClick={(e) => { e.stopPropagation(); handlePlay(session.audioBlob, session.id); }}
-                                                        className={`p-2 rounded-md transition-all ${playingAudio === session.id ? 'bg-indigo-500 text-white animate-pulse' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
-                                                        title="Play Recording"
-                                                    >
-                                                        <Play className="w-4 h-4 fill-current" />
-                                                    </button>
-                                                    <a 
-                                                        href={URL.createObjectURL(session.audioBlob)} 
-                                                        download={`LIA-Session-${session.id}.webm`}
-                                                        className="p-2 rounded-md hover:bg-slate-700 text-slate-400 transition-colors"
-                                                        title="Download Audio"
-                                                    >
-                                                        <Download className="w-4 h-4" />
-                                                    </a>
+                                                <div className="flex items-center gap-2 bg-slate-900/50 p-2 rounded-lg border border-slate-700/50">
+                                                    <audio 
+                                                        controls 
+                                                        src={URL.createObjectURL(session.audioBlob)} 
+                                                        className="h-8 w-48 md:w-64" 
+                                                        title="Recorded Audio"
+                                                    />
                                                 </div>
                                             )}
 
