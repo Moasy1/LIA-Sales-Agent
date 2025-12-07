@@ -1,11 +1,12 @@
 
-import React, { useState, useMemo } from 'react';
-import { ArchivedSession, TranscriptItem } from '../types';
-import { syncPendingSessions, getAllSessionsFromDb } from '../services/storage';
+import React, { useState, useMemo, useEffect } from 'react';
+import { ArchivedSession, KnowledgeItem } from '../types';
+import { syncPendingSessions, getAllSessionsFromDb, getKnowledgeItems, saveKnowledgeItem, deleteKnowledgeItem } from '../services/storage';
 import { 
-  X, Play, FileSpreadsheet, PhoneOutgoing, Mic, Download, 
+  X, Play, PhoneOutgoing, Mic, Download, 
   FileText, MessageSquare, Clock, Calendar, User, ChevronDown, ChevronUp,
-  Search, Filter, CheckCircle2, Cloud, CloudOff, RefreshCw
+  Search, Cloud, CloudOff, RefreshCw, BarChart3, BrainCircuit, Plus, Trash2, CheckSquare, Square,
+  FileUp, BookOpen
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -15,21 +16,58 @@ interface AdminDashboardProps {
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessions, onClose }) => {
   const [sessions, setSessions] = useState<ArchivedSession[]>(initialSessions);
-  const [activeView, setActiveView] = useState<'sessions' | 'leads' | 'logs'>('sessions');
+  const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([]);
+  const [activeView, setActiveView] = useState<'analytics' | 'brain' | 'sessions' | 'leads' | 'logs'>('analytics');
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [expandedSession, setExpandedSession] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // Derived Statistics
+  // New Knowledge Form State
+  const [isAddingKnowledge, setIsAddingKnowledge] = useState(false);
+  const [newTopicTitle, setNewTopicTitle] = useState('');
+  const [newTopicContent, setNewTopicContent] = useState('');
+  const [newTopicFile, setNewTopicFile] = useState<File | null>(null);
+
+  useEffect(() => {
+    getKnowledgeItems().then(setKnowledgeItems);
+  }, []);
+
+  // Derived Statistics for Analytics
   const stats = useMemo(() => {
+    const totalCalls = sessions.length;
+    const totalLeads = sessions.reduce((acc, s) => acc + s.leads.length, 0);
+    
+    // Calculate Leads by Interest
+    const interests: Record<string, number> = {};
+    sessions.forEach(s => s.leads.forEach(l => {
+        const i = l.interest || 'General';
+        interests[i] = (interests[i] || 0) + 1;
+    }));
+    
+    // Calculate Activity by Day (Last 7 days)
+    const dailyActivity: Record<string, number> = {};
+    const last7Days = Array.from({length: 7}, (_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        return d.toLocaleDateString('en-GB'); // DD/MM/YYYY
+    }).reverse();
+    
+    last7Days.forEach(d => dailyActivity[d] = 0);
+    sessions.forEach(s => {
+        const d = new Date(s.startTime).toLocaleDateString('en-GB');
+        if (dailyActivity[d] !== undefined) dailyActivity[d]++;
+    });
+
     return {
-        totalCalls: sessions.length,
-        totalLeads: sessions.reduce((acc, s) => acc + s.leads.length, 0),
+        totalCalls,
+        totalLeads,
         pendingSync: sessions.filter(s => !s.synced).length,
         avgDuration: sessions.length > 0 
             ? Math.round(sessions.reduce((acc, s) => acc + (s.endTime.getTime() - s.startTime.getTime())/1000, 0) / sessions.length) 
-            : 0
+            : 0,
+        interests,
+        dailyActivity: last7Days.map(d => ({ date: d, count: dailyActivity[d] }))
     };
   }, [sessions]);
 
@@ -45,23 +83,57 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessio
   const handleSync = async () => {
     setIsSyncing(true);
     await syncPendingSessions();
-    // Refresh list
     const updatedSessions = await getAllSessionsFromDb();
     setSessions(updatedSessions);
     setIsSyncing(false);
   };
 
+  const handleSaveKnowledge = async () => {
+      if(!newTopicTitle || !newTopicContent) return;
+      
+      const newItem: KnowledgeItem = {
+          id: Math.random().toString(36).substring(7),
+          title: newTopicTitle,
+          content: newTopicContent,
+          type: newTopicFile ? 'pdf' : 'text',
+          fileName: newTopicFile?.name,
+          fileBlob: newTopicFile || undefined,
+          active: true,
+          createdAt: new Date()
+      };
+      
+      await saveKnowledgeItem(newItem);
+      const updated = await getKnowledgeItems();
+      setKnowledgeItems(updated);
+      
+      // Reset Form
+      setIsAddingKnowledge(false);
+      setNewTopicTitle('');
+      setNewTopicContent('');
+      setNewTopicFile(null);
+  };
+
+  const handleDeleteKnowledge = async (id: string) => {
+      if(!confirm("Are you sure?")) return;
+      await deleteKnowledgeItem(id);
+      setKnowledgeItems(await getKnowledgeItems());
+  };
+
+  const toggleKnowledgeActive = async (item: KnowledgeItem) => {
+      const updated = { ...item, active: !item.active };
+      await saveKnowledgeItem(updated);
+      setKnowledgeItems(await getKnowledgeItems());
+  };
+
   const exportToCSV = () => {
     let csvContent = "data:text/csv;charset=utf-8,";
     csvContent += "Session ID,Name,Phone,Email,Interest,Timestamp,Synced\n";
-
     sessions.forEach(session => {
         session.leads.forEach(lead => {
             const row = `${session.id},${lead.name},${lead.phone},${lead.email || ''},${lead.interest || ''},${lead.timestamp.toLocaleString()},${session.synced ? 'Yes' : 'No'}\n`;
             csvContent += row;
         });
     });
-
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
@@ -89,9 +161,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessio
                 <div>
                     <h2 className="text-lg font-bold text-white tracking-wide">LIA Management Console</h2>
                     <div className="flex items-center gap-3 text-xs text-slate-400">
-                        <span>{stats.totalCalls} Calls</span>
-                        <span className="w-1 h-1 bg-slate-600 rounded-full"></span>
-                        <span className={stats.pendingSync > 0 ? "text-amber-400 font-bold" : ""}>{stats.pendingSync} Pending Upload</span>
+                         {isSyncing ? (
+                             <span className="text-indigo-400 animate-pulse flex items-center gap-1"><RefreshCw className="w-3 h-3 animate-spin"/> Syncing...</span>
+                         ) : (
+                             <span className={stats.pendingSync > 0 ? "text-amber-400 font-bold" : ""}>{stats.pendingSync} Unsynced</span>
+                         )}
                     </div>
                 </div>
             </div>
@@ -102,8 +176,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessio
                     disabled={isSyncing || stats.pendingSync === 0}
                     className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-md text-xs font-medium text-slate-300 disabled:opacity-50 transition-all"
                 >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                    {isSyncing ? 'Syncing...' : 'Sync Now'}
+                    <Cloud className="w-3.5 h-3.5" />
+                    Sync Now
                 </button>
                 <div className="h-6 w-px bg-slate-700"></div>
                 <button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition">
@@ -116,6 +190,21 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessio
             
             {/* Sidebar Navigation */}
             <div className="w-64 bg-slate-800/30 border-r border-slate-700 flex flex-col p-4 gap-2">
+                <button 
+                    onClick={() => setActiveView('analytics')}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeView === 'analytics' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+                >
+                    <BarChart3 className="w-4 h-4" />
+                    Analytics
+                </button>
+                <button 
+                    onClick={() => setActiveView('brain')}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeView === 'brain' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+                >
+                    <BrainCircuit className="w-4 h-4" />
+                    The Brain
+                </button>
+                <div className="h-px bg-slate-700 my-2"></div>
                 <button 
                     onClick={() => setActiveView('sessions')}
                     className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeView === 'sessions' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
@@ -142,6 +231,199 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessio
             {/* Main Content Area */}
             <div className="flex-1 bg-slate-900 overflow-y-auto p-6 relative">
                 
+                {/* --- ANALYTICS VIEW --- */}
+                {activeView === 'analytics' && (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                                <h4 className="text-slate-400 text-xs font-bold uppercase">Total Leads</h4>
+                                <div className="text-3xl font-bold text-white mt-2">{stats.totalLeads}</div>
+                                <div className="text-emerald-400 text-xs mt-1">+12% vs last week</div>
+                            </div>
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                                <h4 className="text-slate-400 text-xs font-bold uppercase">Calls Made</h4>
+                                <div className="text-3xl font-bold text-white mt-2">{stats.totalCalls}</div>
+                            </div>
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                                <h4 className="text-slate-400 text-xs font-bold uppercase">Avg Duration</h4>
+                                <div className="text-3xl font-bold text-white mt-2">{stats.avgDuration}s</div>
+                            </div>
+                            <div className="bg-slate-800 p-5 rounded-2xl border border-slate-700">
+                                <h4 className="text-slate-400 text-xs font-bold uppercase">Pending Upload</h4>
+                                <div className="text-3xl font-bold text-amber-400 mt-2">{stats.pendingSync}</div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Interest Distribution (Pie Chart Simulation) */}
+                            <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 min-h-[300px]">
+                                <h4 className="text-white font-semibold mb-6 flex items-center gap-2">
+                                    <User className="w-4 h-4 text-indigo-400" /> Lead Interests
+                                </h4>
+                                <div className="space-y-4">
+                                    {Object.keys(stats.interests).length === 0 ? (
+                                        <div className="text-slate-500 text-center py-10">No data available</div>
+                                    ) : (
+                                        Object.entries(stats.interests).map(([interest, count], idx) => {
+                                            const percentage = Math.round((count / stats.totalLeads) * 100);
+                                            return (
+                                                <div key={interest} className="group">
+                                                    <div className="flex justify-between text-sm mb-1">
+                                                        <span className="text-slate-300">{interest}</span>
+                                                        <span className="text-slate-400">{percentage}% ({count})</span>
+                                                    </div>
+                                                    <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                                                        <div 
+                                                            className={`h-full rounded-full bg-indigo-${500 + idx * 100} transition-all duration-1000`} 
+                                                            style={{ width: `${percentage}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Daily Activity (Bar Chart Simulation) */}
+                            <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 min-h-[300px]">
+                                <h4 className="text-white font-semibold mb-6 flex items-center gap-2">
+                                    <BarChart3 className="w-4 h-4 text-emerald-400" /> Daily Activity
+                                </h4>
+                                <div className="h-48 flex items-end justify-between gap-2">
+                                    {stats.dailyActivity.map((day, idx) => {
+                                        const max = Math.max(...stats.dailyActivity.map(d => d.count), 5); // Avoid div by zero
+                                        const height = (day.count / max) * 100;
+                                        const dateParts = day.date.split('/');
+                                        
+                                        return (
+                                            <div key={idx} className="flex-1 flex flex-col items-center gap-2 group">
+                                                <div 
+                                                    className="w-full bg-emerald-500/20 group-hover:bg-emerald-500/40 rounded-t-sm transition-all relative"
+                                                    style={{ height: `${Math.max(height, 5)}%` }}
+                                                >
+                                                    {day.count > 0 && (
+                                                        <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-bold text-white bg-slate-900 px-1.5 rounded opacity-0 group-hover:opacity-100 transition">
+                                                            {day.count}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="text-[10px] text-slate-500 rotate-0 md:rotate-0 truncate w-full text-center">
+                                                    {dateParts[0]}/{dateParts[1]}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* --- BRAIN VIEW --- */}
+                {activeView === 'brain' && (
+                    <div className="space-y-6">
+                        <div className="flex justify-between items-center mb-6">
+                            <div>
+                                <h3 className="text-xl font-semibold text-white">Knowledge Base (The Brain)</h3>
+                                <p className="text-slate-400 text-sm">Teach the AI new courses, pricing, or facts. Active items are injected into the model.</p>
+                            </div>
+                            <button 
+                                onClick={() => setIsAddingKnowledge(true)}
+                                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition shadow-lg shadow-indigo-600/20"
+                            >
+                                <Plus className="w-4 h-4" /> Add Topic
+                            </button>
+                        </div>
+
+                        {/* Add Knowledge Form */}
+                        {isAddingKnowledge && (
+                            <div className="bg-slate-800 p-6 rounded-xl border border-indigo-500/30 mb-8 animate-in slide-in-from-top-4">
+                                <h4 className="font-semibold text-white mb-4">Add New Knowledge Topic</h4>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-xs text-slate-400 mb-1">Topic Title</label>
+                                        <input 
+                                            type="text" 
+                                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:border-indigo-500 outline-none"
+                                            placeholder="e.g. Advanced AI Diploma Pricing"
+                                            value={newTopicTitle}
+                                            onChange={e => setNewTopicTitle(e.target.value)}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-slate-400 mb-1">Content (Text context for AI)</label>
+                                        <textarea 
+                                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:border-indigo-500 outline-none h-32"
+                                            placeholder="Paste the course details, prices, or FAQs here..."
+                                            value={newTopicContent}
+                                            onChange={e => setNewTopicContent(e.target.value)}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-slate-400 mb-1">Upload PDF (Optional - For Reference)</label>
+                                        <div className="border-2 border-dashed border-slate-700 rounded-lg p-4 text-center hover:border-indigo-500/50 transition cursor-pointer relative">
+                                            <input 
+                                                type="file" 
+                                                accept=".pdf" 
+                                                className="absolute inset-0 opacity-0 cursor-pointer"
+                                                onChange={e => setNewTopicFile(e.target.files?.[0] || null)}
+                                            />
+                                            <FileUp className="w-6 h-6 mx-auto text-slate-500 mb-2" />
+                                            <p className="text-sm text-slate-400">{newTopicFile ? newTopicFile.name : "Click to upload PDF"}</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-3 justify-end pt-2">
+                                        <button onClick={() => setIsAddingKnowledge(false)} className="px-4 py-2 text-slate-400 hover:text-white">Cancel</button>
+                                        <button onClick={handleSaveKnowledge} className="px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg">Save Topic</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Knowledge List */}
+                        <div className="grid grid-cols-1 gap-4">
+                            {knowledgeItems.length === 0 ? (
+                                <div className="text-center py-20 text-slate-500 bg-slate-800/20 rounded-2xl border border-slate-800 border-dashed">
+                                    <BrainCircuit className="w-12 h-12 mx-auto mb-4 opacity-20" />
+                                    <p>Brain is empty. Add a topic to teach the AI.</p>
+                                </div>
+                            ) : (
+                                knowledgeItems.map(item => (
+                                    <div key={item.id} className={`bg-slate-800/50 border rounded-xl p-4 flex justify-between items-start transition-all ${item.active ? 'border-indigo-500/30' : 'border-slate-700 opacity-60'}`}>
+                                        <div className="flex gap-4">
+                                            <div className={`p-3 rounded-lg ${item.type === 'pdf' ? 'bg-red-500/10 text-red-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                                                {item.type === 'pdf' ? <BookOpen className="w-5 h-5" /> : <FileText className="w-5 h-5" />}
+                                            </div>
+                                            <div>
+                                                <h4 className="font-semibold text-slate-200">{item.title}</h4>
+                                                <p className="text-xs text-slate-500 mt-1 line-clamp-2 max-w-xl">{item.content}</p>
+                                                {item.fileName && (
+                                                    <div className="mt-2 inline-flex items-center gap-1 text-[10px] bg-slate-700 px-2 py-1 rounded text-slate-300">
+                                                        PDF: {item.fileName}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <button 
+                                                onClick={() => toggleKnowledgeActive(item)}
+                                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium border transition ${item.active ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-slate-700 border-slate-600 text-slate-400'}`}
+                                            >
+                                                {item.active ? <CheckSquare className="w-3 h-3" /> : <Square className="w-3 h-3" />}
+                                                {item.active ? 'Active' : 'Inactive'}
+                                            </button>
+                                            <button onClick={() => handleDeleteKnowledge(item.id)} className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-md transition">
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 {/* --- SESSIONS VIEW --- */}
                 {activeView === 'sessions' && (
                     <div className="space-y-6">

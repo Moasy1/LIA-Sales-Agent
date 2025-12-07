@@ -47,4 +47,15 @@ export interface ArchivedSession {
   synced?: boolean; // New flag to track if uploaded to Vercel Backend
 }
 
+export interface KnowledgeItem {
+  id: string;
+  title: string;
+  content: string; // The text text fed to the AI
+  type: 'text' | 'pdf';
+  fileName?: string;
+  fileBlob?: Blob; // Stored PDF file
+  active: boolean;
+  createdAt: Date;
+}
+
 export const DEFAULT_VOICE_NAME = 'Zephyr';

@@ -1,9 +1,10 @@
 
-import { ArchivedSession } from '../types';
+import { ArchivedSession, KnowledgeItem } from '../types';
 
 const DB_NAME = 'LIA_Voice_Agent_DB';
-const STORE_NAME = 'sessions';
-const DB_VERSION = 1;
+const STORE_SESSIONS = 'sessions';
+const STORE_KNOWLEDGE = 'knowledge';
+const DB_VERSION = 2; // Upgraded to support Knowledge Store
 
 /**
  * Open the IndexedDB database.
@@ -14,8 +15,15 @@ const openDB = (): Promise<IDBDatabase> => {
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      
+      // Create Sessions Store
+      if (!db.objectStoreNames.contains(STORE_SESSIONS)) {
+        db.createObjectStore(STORE_SESSIONS, { keyPath: 'id' });
+      }
+
+      // Create Knowledge Store (New in v2)
+      if (!db.objectStoreNames.contains(STORE_KNOWLEDGE)) {
+        db.createObjectStore(STORE_KNOWLEDGE, { keyPath: 'id' });
       }
     };
 
@@ -35,8 +43,8 @@ const openDB = (): Promise<IDBDatabase> => {
 const markSessionAsSynced = async (id: string) => {
   try {
     const db = await openDB();
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
+    const tx = db.transaction(STORE_SESSIONS, 'readwrite');
+    const store = tx.objectStore(STORE_SESSIONS);
     const request = store.get(id);
 
     request.onsuccess = () => {
@@ -53,11 +61,9 @@ const markSessionAsSynced = async (id: string) => {
 
 /**
  * --- BACKEND INTEGRATION POINT ---
- * Configured to use VITE_BACKEND_URL from process.env (injected by Vite).
  */
 const getBackendUrl = () => {
     let url = process.env.VITE_BACKEND_URL || '';
-    // Remove trailing slash if present to avoid double slashes
     if (url.endsWith('/')) {
         url = url.slice(0, -1);
     }
@@ -86,7 +92,6 @@ const uploadSessionToBackend = async (session: ArchivedSession): Promise<boolean
             formData.append('audio', session.audioBlob, `session-${session.id}.webm`);
         }
 
-        // Adjust endpoint '/api/sessions' based on your actual Vercel backend route
         const response = await fetch(`${backendUrl}/api/sessions`, {
             method: 'POST',
             body: formData
@@ -105,24 +110,21 @@ const uploadSessionToBackend = async (session: ArchivedSession): Promise<boolean
 }
 
 /**
- * Save a session to the Local Database (IndexedDB).
- * Sets synced=false initially, then attempts upload.
+ * Save a session to the Local Database.
  */
 export const saveSessionToDb = async (session: ArchivedSession): Promise<void> => {
   try {
-    // Initialize as not synced
     session.synced = false;
 
     const db = await openDB();
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
+    const tx = db.transaction(STORE_SESSIONS, 'readwrite');
+    const store = tx.objectStore(STORE_SESSIONS);
     
     store.put(session);
 
     return new Promise((resolve, reject) => {
       tx.oncomplete = () => {
         console.log('Session saved locally:', session.id);
-        // Attempt immediate upload
         uploadSessionToBackend(session); 
         resolve();
       };
@@ -134,19 +136,18 @@ export const saveSessionToDb = async (session: ArchivedSession): Promise<void> =
 };
 
 /**
- * Retrieve all sessions from the Local Database.
+ * Retrieve all sessions.
  */
 export const getAllSessionsFromDb = async (): Promise<ArchivedSession[]> => {
   try {
     const db = await openDB();
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const store = tx.objectStore(STORE_NAME);
+    const tx = db.transaction(STORE_SESSIONS, 'readonly');
+    const store = tx.objectStore(STORE_SESSIONS);
     const request = store.getAll();
 
     return new Promise((resolve, reject) => {
       request.onsuccess = () => {
         const results = request.result as ArchivedSession[];
-        // Sort by date descending
         results.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
         resolve(results);
       };
@@ -159,22 +160,58 @@ export const getAllSessionsFromDb = async (): Promise<ArchivedSession[]> => {
 };
 
 /**
- * Manually trigger synchronization for all pending sessions.
- * Call this from the "Sync Now" button in the dashboard.
+ * Trigger sync.
  */
 export const syncPendingSessions = async (): Promise<number> => {
   const sessions = await getAllSessionsFromDb();
   const pending = sessions.filter(s => !s.synced);
   
   if (pending.length === 0) return 0;
-
-  console.log(`Attempting to sync ${pending.length} pending sessions...`);
   
   let successCount = 0;
   for (const session of pending) {
     const success = await uploadSessionToBackend(session);
     if (success) successCount++;
   }
-  
   return successCount;
+};
+
+// --- KNOWLEDGE BASE FUNCTIONS ---
+
+export const saveKnowledgeItem = async (item: KnowledgeItem): Promise<void> => {
+  const db = await openDB();
+  const tx = db.transaction(STORE_KNOWLEDGE, 'readwrite');
+  const store = tx.objectStore(STORE_KNOWLEDGE);
+  store.put(item);
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+};
+
+export const getKnowledgeItems = async (): Promise<KnowledgeItem[]> => {
+  const db = await openDB();
+  const tx = db.transaction(STORE_KNOWLEDGE, 'readonly');
+  const store = tx.objectStore(STORE_KNOWLEDGE);
+  const request = store.getAll();
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => {
+        // Sort active first, then date
+        const res = request.result as KnowledgeItem[];
+        res.sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1));
+        resolve(res);
+    };
+    request.onerror = () => reject(request.error);
+  });
+};
+
+export const deleteKnowledgeItem = async (id: string): Promise<void> => {
+  const db = await openDB();
+  const tx = db.transaction(STORE_KNOWLEDGE, 'readwrite');
+  const store = tx.objectStore(STORE_KNOWLEDGE);
+  store.delete(id);
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
 };
