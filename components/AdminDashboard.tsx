@@ -73,11 +73,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessio
 
   const handlePlay = (blob: Blob | null, id: string) => {
     if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.play();
-    audio.onended = () => setPlayingAudio(null);
-    setPlayingAudio(id);
+    try {
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.play().catch(e => {
+            console.error("Playback failed:", e);
+            alert("Error playing audio. The format might not be supported by your browser.");
+        });
+        audio.onended = () => setPlayingAudio(null);
+        setPlayingAudio(id);
+    } catch (e) {
+        console.error("Error creating audio object:", e);
+    }
   };
 
   const handleSync = async () => {

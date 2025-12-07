@@ -1,8 +1,9 @@
+
 /**
  * Converts a Float32Array of audio data to a PCM16 Blob.
  * Used for sending audio to Gemini.
  */
-export function createBlob(data: Float32Array): { data: string; mimeType: string } {
+export function createBlob(data: Float32Array, sampleRate: number): { data: string; mimeType: string } {
   const l = data.length;
   const int16 = new Int16Array(l);
   for (let i = 0; i < l; i++) {
@@ -12,7 +13,7 @@ export function createBlob(data: Float32Array): { data: string; mimeType: string
   }
   return {
     data: encode(new Uint8Array(int16.buffer)),
-    mimeType: 'audio/pcm;rate=16000',
+    mimeType: `audio/pcm;rate=${sampleRate}`,
   };
 }
 

@@ -162,7 +162,9 @@ ${activeKnowledge}
 المصادر الإضافية:
 1. الموقع الرئيسي: https://london-innovation-academy.com/`;
 
-      inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      // Use browser default sample rate for input to avoid resampling artifacts/errors
+      inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      // Output at 24kHz as per Gemini Live API requirement for playback, or system default
       outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
 
       inputAnalyserRef.current = inputAudioContextRef.current.createAnalyser();
@@ -182,8 +184,18 @@ ${activeKnowledge}
         const micSourceForRecord = outputAudioContextRef.current.createMediaStreamSource(stream);
         micSourceForRecord.connect(dest);
 
+        // Determine supported MIME type for recording
+        let mimeType = '';
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          mimeType = 'audio/webm;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+           mimeType = 'audio/mp4';
+        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+           mimeType = 'audio/webm';
+        }
+
         // Start Recording on Mixed Stream
-        const recorder = new MediaRecorder(dest.stream);
+        const recorder = mimeType ? new MediaRecorder(dest.stream, { mimeType }) : new MediaRecorder(dest.stream);
         mediaRecorderRef.current = recorder;
         recorder.ondataavailable = (e) => {
           if (e.data.size > 0) {
@@ -191,7 +203,9 @@ ${activeKnowledge}
           }
         };
         recorder.onstop = () => {
-          const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          // Use the detected mimeType or fallback
+          const finalMimeType = mimeType || 'audio/webm';
+          const blob = new Blob(audioChunksRef.current, { type: finalMimeType });
           setUserAudioBlob(blob);
         };
         recorder.start();
@@ -238,7 +252,8 @@ ${activeKnowledge}
               const rms = Math.sqrt(sum / inputData.length);
               setIsUserSpeaking(rms > 0.02);
 
-              const pcmBlob = createBlob(inputData);
+              // IMPORTANT: Pass the actual sample rate to createBlob
+              const pcmBlob = createBlob(inputData, inputCtx.sampleRate);
               sessionPromise.then((session) => {
                 session.sendRealtimeInput({ media: pcmBlob });
               });
@@ -375,8 +390,8 @@ ${activeKnowledge}
                 currentOutputTranscription.current = '';
             }
           },
-          onclose: () => {
-            console.log('Connection closed');
+          onclose: (e) => {
+            console.log('Connection closed', e);
             disconnect();
           },
           onerror: (err) => {
