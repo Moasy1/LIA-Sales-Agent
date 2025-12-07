@@ -1,3 +1,4 @@
+
 import { ArchivedSession, KnowledgeItem } from '../types';
 import { db, storage } from './firebase';
 import { collection, doc, setDoc, writeBatch } from 'firebase/firestore';
@@ -76,7 +77,11 @@ const uploadSessionToBackend = async (session: ArchivedSession): Promise<boolean
         // 1. Upload Audio to Firebase Storage (if exists)
         if (session.audioBlob) {
             const storageRef = ref(storage, `recordings/session-${session.id}.webm`);
-            await uploadBytes(storageRef, session.audioBlob);
+            // Validate MIME type for correct playback in console
+            const metadata = {
+              contentType: session.audioBlob.type || 'audio/webm',
+            };
+            await uploadBytes(storageRef, session.audioBlob, metadata);
             audioDownloadUrl = await getDownloadURL(storageRef);
             console.log("Audio uploaded:", audioDownloadUrl);
         }
@@ -132,6 +137,7 @@ const uploadSessionToBackend = async (session: ArchivedSession): Promise<boolean
                 });
             });
             await batch.commit();
+            console.log(`Synced ${session.leads.length} leads to CRM.`);
         }
 
         console.log("Session saved to Firestore!");

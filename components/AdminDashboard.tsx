@@ -2,11 +2,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { ArchivedSession, KnowledgeItem } from '../types';
 import { syncPendingSessions, getAllSessionsFromDb, getKnowledgeItems, saveKnowledgeItem, deleteKnowledgeItem } from '../services/storage';
+import { validateFirebaseConnection } from '../services/firebase';
 import { 
   X, Play, PhoneOutgoing, Mic, Download, 
   FileText, MessageSquare, Clock, Calendar, User, ChevronDown, ChevronUp,
   Search, Cloud, CloudOff, RefreshCw, BarChart3, BrainCircuit, Plus, Trash2, CheckSquare, Square,
-  FileUp, BookOpen
+  FileUp, BookOpen, Activity
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -21,6 +22,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessio
   const [expandedSession, setExpandedSession] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<{success: boolean, message: string} | null>(null);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
 
   // New Knowledge Form State
   const [isAddingKnowledge, setIsAddingKnowledge] = useState(false);
@@ -76,6 +79,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessio
     const updatedSessions = await getAllSessionsFromDb();
     setSessions(updatedSessions);
     setIsSyncing(false);
+  };
+  
+  const handleTestConnection = async () => {
+      setIsTestingConnection(true);
+      const result = await validateFirebaseConnection();
+      setConnectionStatus(result);
+      setTimeout(() => setConnectionStatus(null), 5000);
+      setIsTestingConnection(false);
   };
 
   const handleSaveKnowledge = async () => {
@@ -156,11 +167,27 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessio
                          ) : (
                              <span className={stats.pendingSync > 0 ? "text-amber-400 font-bold" : ""}>{stats.pendingSync} Unsynced</span>
                          )}
+                         
+                         {connectionStatus && (
+                            <span className={`ml-2 px-2 py-0.5 rounded ${connectionStatus.success ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                                {connectionStatus.message}
+                            </span>
+                         )}
                     </div>
                 </div>
             </div>
             
             <div className="flex items-center gap-3">
+                <button 
+                    onClick={handleTestConnection}
+                    disabled={isTestingConnection}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-md text-xs font-medium text-slate-300 transition-all"
+                    title="Validate Firebase Connection"
+                >
+                    <Activity className={`w-3.5 h-3.5 ${isTestingConnection ? 'animate-spin' : ''}`} />
+                    Test Cloud
+                </button>
+                <div className="h-6 w-px bg-slate-700 mx-1"></div>
                 <button 
                     onClick={handleSync}
                     disabled={isSyncing || stats.pendingSync === 0}
@@ -169,7 +196,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ sessions: initialSessio
                     <Cloud className="w-3.5 h-3.5" />
                     Sync Now
                 </button>
-                <div className="h-6 w-px bg-slate-700"></div>
+                <div className="h-6 w-px bg-slate-700 mx-1"></div>
                 <button onClick={onClose} className="p-2 hover:bg-slate-700 rounded-full text-slate-400 hover:text-white transition">
                     <X className="w-6 h-6" />
                 </button>
